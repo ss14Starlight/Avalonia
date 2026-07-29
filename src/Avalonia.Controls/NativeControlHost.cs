@@ -4,6 +4,8 @@ using System.Diagnostics;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls.Automation.Peers;
 using Avalonia.Controls.Platform;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform;
 using Avalonia.Rendering;
@@ -229,5 +231,17 @@ namespace Avalonia.Controls
         }
 
         protected override AutomationPeer OnCreateAutomationPeer() => new NativeControlHostPeer(this);
+
+        protected override void OnGotFocus(FocusChangedEventArgs e)
+        {
+            base.OnGotFocus(e);
+            _attachment?.NotifyFocusChanged(true);
+        }
+
+        protected override void OnLostFocus(FocusChangedEventArgs e)
+        {
+            base.OnLostFocus(e);
+            _attachment?.NotifyFocusChanged(false);
+        }
     }
 }

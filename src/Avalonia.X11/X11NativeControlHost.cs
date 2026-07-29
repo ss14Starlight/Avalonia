@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Avalonia.Controls.Platform;
 using Avalonia.Platform;
@@ -10,12 +11,21 @@ namespace Avalonia.X11
     internal class X11NativeControlHost : INativeControlHostImpl
     {
         private readonly AvaloniaX11Platform _platform;
+        private readonly List<Attachment> _attachments = new();
         public X11Window Window { get; }
 
         public X11NativeControlHost(AvaloniaX11Platform platform, X11Window window)
         {
             _platform = platform;
             Window = window;
+            Window.Activated += () => BroadcastActivation(true);
+            Window.Deactivated += () => BroadcastActivation(false);
+        }
+
+        private void BroadcastActivation(bool active)
+        {
+            foreach (var attachment in _attachments)
+                attachment.SendActivation(active);
         }
 
         public INativeControlHostDestroyableControlHandle CreateDefaultChild(IPlatformHandle parent)
@@ -32,8 +42,9 @@ namespace Avalonia.X11
                 var child = create(holder);
                 // ReSharper disable once UseObjectOrCollectionInitializer
                 // It has to be assigned to the variable before property setter is called so we dispose it on exception
-                attachment = new Attachment(_platform.Display, holder, _platform.OrphanedWindow, child);
+                attachment = new Attachment(_platform.Display, holder, _platform.OrphanedWindow, child, a => _attachments.Remove(a));
                 attachment.AttachedTo = this;
+                _attachments.Add(attachment);
                 return attachment;
             }
             catch
@@ -50,7 +61,8 @@ namespace Avalonia.X11
                 throw new ArgumentException(handle.HandleDescriptor + " is not compatible with the current window",
                     nameof(handle));
             var attachment = new Attachment(_platform.Display, new DumbWindow(_platform.Info, false, Window.Handle.Handle),
-                _platform.OrphanedWindow, handle) { AttachedTo = this };
+                _platform.OrphanedWindow, handle, a => _attachments.Remove(a)) { AttachedTo = this };
+            _attachments.Add(attachment);
             return attachment;
         }
 
@@ -106,17 +118,24 @@ namespace Avalonia.X11
             private IPlatformHandle? _child;
             private X11NativeControlHost? _attachedTo;
             private bool _mapped;
-            
-            public Attachment(IntPtr display, DumbWindow holder, IntPtr orphanedWindow, IPlatformHandle child)
+
+            private readonly Action<Attachment> _onDisposed;
+
+            public Attachment(IntPtr display, DumbWindow holder, IntPtr orphanedWindow,
+                IPlatformHandle child, Action<Attachment> onDisposed)
             {
                 _display = display;
                 _orphanedWindow = orphanedWindow;
                 _holder = holder;
                 _child = child;
+                _onDisposed = onDisposed;
                 XReparentWindow(_display, child.Handle, holder.Handle, 0, 0);
                 XMapWindow(_display, child.Handle);
+
+                XEmbedHelper.Send(_display, child.Handle, XEmbedMessage.EmbeddedNotify,
+                    data1: holder.Handle);
             }
-            
+
             public void Dispose()
             {
                 if (_child != null)
@@ -128,6 +147,7 @@ namespace Avalonia.X11
                 _holder?.Destroy();
                 _holder = null;
                 _attachedTo = null;
+                _onDisposed(this);
             }
 
             [MemberNotNull(nameof(_child))]
@@ -196,6 +216,29 @@ namespace Avalonia.X11
                     XRaiseWindow(_display, _holder.Handle);
                     _mapped = true;
                 }
+            }
+
+            public void SendActivation(bool active)
+            {
+                if (_child is null)
+                    return;
+
+                XEmbedHelper.Send(
+                    _display,
+                    _child.Handle,
+                    active ? XEmbedMessage.WindowActivate : XEmbedMessage.WindowDeactivate);
+            }
+
+            public void NotifyFocusChanged(bool focused)
+            {
+                if (_child is null)
+                    return;
+
+                XEmbedHelper.Send(
+                    _display,
+                    _child.Handle,
+                    focused ? XEmbedMessage.FocusIn : XEmbedMessage.FocusOut,
+                    detail: focused ? (IntPtr)0 : IntPtr.Zero);
             }
         }
     }

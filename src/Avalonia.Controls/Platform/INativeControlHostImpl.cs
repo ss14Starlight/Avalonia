@@ -28,5 +28,6 @@ namespace Avalonia.Controls.Platform
         bool IsCompatibleWith(INativeControlHostImpl host);
         void HideWithSize(Size size);
         void ShowInBounds(Rect rect);
+        void NotifyFocusChanged(bool focused) { }
     }
 }
