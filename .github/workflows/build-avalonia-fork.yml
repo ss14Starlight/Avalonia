@@ -1,0 +1,68 @@
+name: build-avalonia-fork
+on:
+  workflow_dispatch:
+  push:
+    branches: [xembed]
+
+env:
+  FORK_VERSION: 12.0.1-starlight-xembed.${{ github.run_number }}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ss14Starlight/Avalonia
+          ref: xembed
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install required workloads
+        run: dotnet workload install android ios tvos wasm-tools
+      - name: Install Nuke
+        run: dotnet tool install --global Nuke.GlobalTool --version 6.2.1
+      - name: Build + pack
+        shell: pwsh
+        run: nuke --target Package --configuration Release -p:Version=${{ env.FORK_VERSION }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avalonia-fork-nupkgs-windows
+          path: artifacts/**/*.nupkg
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ss14Starlight/Avalonia
+          ref: xembed
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install required workloads
+        run: dotnet workload install android ios tvos wasm-tools
+      - name: Install Nuke
+        run: dotnet tool install --global Nuke.GlobalTool --version 6.2.1
+      - name: Build + pack
+        run: nuke --target Package --configuration Release -p:Version=${{ env.FORK_VERSION }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avalonia-fork-nupkgs-macos
+          path: artifacts/**/*.nupkg
+
+  bundle:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-nupkgs*'
+          merge-multiple: true
+          path: local-nuget-feed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-nuget-feed
+          path: local-nuget-feed/*.nupkg
