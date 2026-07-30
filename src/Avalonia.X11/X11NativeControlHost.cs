@@ -42,7 +42,7 @@ namespace Avalonia.X11
                 var child = create(holder);
                 // ReSharper disable once UseObjectOrCollectionInitializer
                 // It has to be assigned to the variable before property setter is called so we dispose it on exception
-                attachment = new Attachment(_platform.Display, holder, _platform.OrphanedWindow, child, a => _attachments.Remove(a));
+                attachment = new Attachment(_platform, holder, _platform.OrphanedWindow, child, a => _attachments.Remove(a));
                 attachment.AttachedTo = this;
                 _attachments.Add(attachment);
                 return attachment;
@@ -60,7 +60,7 @@ namespace Avalonia.X11
             if (!IsCompatibleWith(handle))
                 throw new ArgumentException(handle.HandleDescriptor + " is not compatible with the current window",
                     nameof(handle));
-            var attachment = new Attachment(_platform.Display, new DumbWindow(_platform.Info, false, Window.Handle.Handle),
+            var attachment = new Attachment(_platform, new DumbWindow(_platform.Info, false, Window.Handle.Handle),
                 _platform.OrphanedWindow, handle, a => _attachments.Remove(a)) { AttachedTo = this };
             _attachments.Add(attachment);
             return attachment;
@@ -112,6 +112,7 @@ namespace Avalonia.X11
 
         private class Attachment : INativeControlHostControlTopLevelAttachment
         {
+            private readonly AvaloniaX11Platform _platform;
             private readonly IntPtr _display;
             private readonly IntPtr _orphanedWindow;
             private DumbWindow? _holder;
@@ -119,21 +120,39 @@ namespace Avalonia.X11
             private X11NativeControlHost? _attachedTo;
             private bool _mapped;
 
+            private IntPtr GetEmbedAtom(IntPtr display) => XInternAtom(display, "_XEMBED", false);
+
             private readonly Action<Attachment> _onDisposed;
 
-            public Attachment(IntPtr display, DumbWindow holder, IntPtr orphanedWindow,
+            public Attachment(AvaloniaX11Platform platform, DumbWindow holder, IntPtr orphanedWindow,
                 IPlatformHandle child, Action<Attachment> onDisposed)
             {
-                _display = display;
+                _platform = platform;
+                _display = platform.Display;
                 _orphanedWindow = orphanedWindow;
                 _holder = holder;
                 _child = child;
                 _onDisposed = onDisposed;
+
+                platform.Windows[holder.Handle] = new X11WindowInfo(OnHolderEvent, null);
+
                 XReparentWindow(_display, child.Handle, holder.Handle, 0, 0);
                 XMapWindow(_display, child.Handle);
 
                 XEmbedHelper.Send(_display, child.Handle, XEmbedMessage.EmbeddedNotify,
                     data1: holder.Handle);
+            }
+
+            private void OnHolderEvent(ref XEvent ev)
+            {
+                if (ev.type != XEventName.ClientMessage)
+                    return;
+                if (ev.ClientMessageEvent.message_type != GetEmbedAtom(_display))
+                    return;
+
+                var message = (XEmbedMessage)ev.ClientMessageEvent.ptr2.ToInt32();
+
+                System.Console.WriteLine($"[XEmbed] holder received: {message}");
             }
 
             public void Dispose()
@@ -143,6 +162,9 @@ namespace Avalonia.X11
                     XReparentWindow(_display, _child.Handle, _orphanedWindow, 0, 0);
                     _child = null;
                 }
+
+                if (_holder != null)
+                    _platform.Windows.Remove(_holder.Handle);
 
                 _holder?.Destroy();
                 _holder = null;
